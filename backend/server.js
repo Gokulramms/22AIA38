@@ -1,7 +1,7 @@
 const express=require("express");
 const {save,get,exists}=require("./urlstore.js");
 const {generateShortcode,isExpired,isoExpiry}=require("./util.js");
-const logging=require("./LoggingMeddleware.js");
+const logging=require("../LoggingMeddleware");
 const app=express();
 app.use(express.json());
 app.use(logging);
