@@ -1,53 +1,51 @@
 const express=require("express");
-const jwt=require("jsonwebtoken");
-const logging=require("./LoggingMeddleware.js");
-const auth=require("./authMiddleware");
-
+const {save,get,exists}=require("./urlstore.js");
+const {generateShortcode,isExpired,isoExpiry}=require("./util.js");
+const logging=require("./loggingMiddleware");
 const app=express();
 app.use(express.json());
 app.use(logging);
 
-
-app.get("/one",(req,res)=>res.json({numbers:[1,2,3,4]}));
-app.get("/two",(req, res)=>res.json({numbers:[3,4,5,6]}));
-app.get("/three",(req,res)=>res.json({numbers:[6,7,8,9]}));
-
-app.get("/numbers",async(req,res)=> {
+app.post("/shorturls",(req,res)=>{
   try{
-    const urls=[].concat(req.query.url||[]);
-    let nums=[];
-
-    for(let u of urls){
-      const r=await fetch(u);
-      const d=await r.json();
-      nums.push(...(d.numbers||[]));
+    const {url,validity=30,shortcode}=req.body;
+    if(!url||typeof url!=="string") {
+      return res.status(400).json({error:"Invalid or missing 'url' field"});
     }
-    res.json({numbers:[...new Set(nums)].sort((a,b)=>a-b)});
-  } catch{
-    res.status(500).json({error:"Failed to fetch"});
+    let code=shortcode||generateShortcode();
+    if(exists(code)) {
+      return res.status(409).json({error:"Shortcode already exists"});
+    }
+    const expiry=isoExpiry(validity);
+    save(code,url,expiry);
+    return res.status(201).json({shortLink:`http://localhost:3000/${code}`,expiry});
+  }catch(err){
+    return res.status(500).json({error:"Server error"});
   }
 });
 
-const store={};
-app.post("/shorten",(req,res)=>{
-  const id=Math.random().toString(36).slice(2, 8);
-  store[id] ={url:req.body.url,count:0};
-  res.json({shortUrl:`http://localhost:3000/${id}`});
-});
-app.get("/:id",(req,res)=>{
-  const item=store[req.params.id];
-  if (!item) return res.status(404).json({error:"Not found"});
-  item.count++;
-  res.json({url: item.url,count:item.count });
+app.get("/:code",(req,res)=>{
+  const code=req.params.code;
+  const entry=get(code);
+  if(!entry){
+
+   return res.status(404).json({error:"Shortcode not found"});
+  }
+  if(isExpired(entry)) {
+    return res.status(410).json({error:"Short link has expired"});
+  }
+  entry.clicks++;
+  entry.stats.push({timestamp:new Date(),referrer:req.get("Referer")||"direct",ip:req.ip||"unknown"});
+  return res.redirect(entry.url);
 });
 
-app.post("/login",(req,res)=>{
-  const token=jwt.sign({user:req.body.user},"secret",{expiresIn:"1h"});
-  res.json({token});
+app.get("/shorturls/:code",(req,res)=>{
+  const code=req.params.code;
+  const entry=get(code);
+  if(!entry){
+   return res.status(404).json({error:"Shortcode not found"});
+  }
+  return res.json({originalUrl:entry.url,createdAt:entry.createdAt,expiry:entry.expiry,totalClicks:entry.clicks,clickDetails:entry.stats});
 });
 
-app.get("/secure",auth,(req,res)=>{
-  res.json({ msg:"You accessed secure data",user:req.user});
-});
-
-app.listen(3000,()=>console.log("Server running on 3000"));
+app.listen(3000,()=>console.log("Server running at http://localhost:3000"));
